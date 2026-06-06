@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+:root { color-scheme: dark; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0a0a0f;
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+}
+
+#root { height: 100vh; display: flex; flex-direction: column; }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: #0a0a0f; }
+::-webkit-scrollbar-thumb { background: #2d2d3d; border-radius: 3px; }
+
+.chat-user      { background: #1a1a2e; border-left: 3px solid #3b82f6; padding: 10px 12px; border-radius: 4px; margin-bottom: 8px; }
+.chat-assistant { background: #0f1117; border-left: 3px solid #10b981; padding: 10px 12px; border-radius: 4px; margin-bottom: 8px; }
+.chat-tool      { background: #111827; border-left: 3px solid #f59e0b; padding: 6px 10px; border-radius: 4px; margin-bottom: 6px; font-size: 12px; color: #f59e0b; }
+
+.tab-active   { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+.tab-inactive { border-bottom: 2px solid transparent; color: #64748b; }
+.tab-inactive:hover { color: #94a3b8; }
+
+.card { background: #0f1117; border: 1px solid #1e2130; border-radius: 8px; padding: 16px; }
+
+.metric-up   { color: #10b981; }
+.metric-down { color: #ef4444; }
+.metric-flat { color: #94a3b8; }
+
+.signal-overbought { color: #ef4444; }
+.signal-oversold   { color: #10b981; }
+.signal-neutral    { color: #64748b; }
+
+.rsi-high { background: #3d1515; color: #ef4444; }
+.rsi-low  { background: #0d2e1a; color: #10b981; }
+.score-high { background: #0d2e1a; color: #10b981; font-weight: 700; }
+.score-mid  { background: #2a2000; color: #f59e0b; }
