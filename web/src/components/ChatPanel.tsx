@@ -75,9 +75,9 @@ export default function ChatPanel({ snapshot }: { snapshot: string }) {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
         {messages.length === 0 && (
-          <div className="text-[#2d2d3d] text-xs text-center mt-8 leading-relaxed">
+          <div className="text-[#64748b] text-xs text-center mt-8 leading-relaxed">
             Ask about any stock,<br/>sector, or signal.<br/><br/>
-            <span className="text-[#1e2130]">e.g. "Is NVDA a good entry?"<br/>"Top healthcare stocks?"<br/>"What's the market sentiment?"</span>
+            <span className="text-[#475569]">e.g. "Is NVDA a good entry?"<br/>"Top healthcare stocks?"<br/>"What's the market sentiment?"</span>
           </div>
         )}
         {tools.map((t, i) => (
