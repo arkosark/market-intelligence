@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -591,7 +592,7 @@ main_col, chat_col = st.columns(_ratio)
 # LEFT — MAIN CONTENT (4 tabs)
 # ════════════════════════════════════════════════════════════════
 with main_col:
-    tab1, tab2, tab3, tab4 = st.tabs(["🌡️ Market Pulse", "🔍 Screener", "📊 Deep Dive", "📅 Earnings"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🌡️ Market Pulse", "🔍 Screener", "📊 Deep Dive", "📅 Earnings", "🔭 Intelligence Feed"])
 
     # ── TAB 1: MARKET PULSE ──────────────────────────────────────
     with tab1:
@@ -1026,6 +1027,222 @@ with main_col:
                 st.plotly_chart(fig_tl, use_container_width=True)
         else:
             st.info("No upcoming earnings data found.")
+
+    # ── TAB 5: INTELLIGENCE FEED ──────────────────────────────────
+    with tab5:
+        DEEPSTACK_DB = r"C:\deepstack\data\knowledge_graph.duckdb"
+        DEEPSTACK_SOCIAL = r"C:\deepstack\agent\tools\social.py"
+
+        @st.cache_data(ttl=300)
+        def _load_feed():
+            import sys, importlib, duckdb as _ddb
+            from pathlib import Path
+            if not Path(DEEPSTACK_DB).exists():
+                return None
+            con = _ddb.connect(DEEPSTACK_DB, read_only=True)
+
+            # Social pulls
+            try:
+                social = con.execute("""
+                    SELECT source, author, subreddit, url, content, tickers,
+                           relevance, pulled_at, status
+                    FROM social_pulls
+                    ORDER BY relevance DESC, pulled_at DESC
+                    LIMIT 100
+                """).fetchdf()
+            except Exception:
+                social = pd.DataFrame()
+
+            # Signal queue
+            try:
+                signals = con.execute("""
+                    SELECT signal_type, hypothesis, final_score, status,
+                           tickers, created_at
+                    FROM signals
+                    ORDER BY final_score DESC
+                    LIMIT 30
+                """).fetchdf()
+            except Exception:
+                signals = pd.DataFrame()
+
+            # Agent log
+            try:
+                agent_log = con.execute("""
+                    SELECT ts, action, entity, detail, model_tier
+                    FROM agent_log
+                    ORDER BY ts DESC
+                    LIMIT 50
+                """).fetchdf()
+            except Exception:
+                agent_log = pd.DataFrame()
+
+            # Cycle cost
+            try:
+                cost = con.execute("""
+                    SELECT SUM(cost_usd) as total_usd,
+                           SUM(api_calls) as total_calls,
+                           MAX(cycle_ts) as last_run
+                    FROM cycle_cost_log
+                """).fetchone()
+            except Exception:
+                cost = None
+
+            # Ingest status
+            try:
+                ingest = con.execute("""
+                    SELECT source_key, last_ingested, item_count
+                    FROM ingest_status
+                    ORDER BY last_ingested DESC
+                    LIMIT 20
+                """).fetchdf()
+            except Exception:
+                ingest = pd.DataFrame()
+
+            con.close()
+            return {
+                "social": social,
+                "signals": signals,
+                "agent_log": agent_log,
+                "cost": cost,
+                "ingest": ingest,
+            }
+
+        feed = _load_feed()
+
+        if feed is None:
+            st.info("DeepStack pipeline not initialised. Run the pipeline once to populate the feed.")
+            st.code("cd C:\\deepstack && python run.py --cached --no-news --no-transcripts")
+        else:
+            social_df  = feed["social"]
+            signals_df = feed["signals"]
+            log_df     = feed["agent_log"]
+            cost_row   = feed["cost"]
+            ingest_df  = feed["ingest"]
+
+            # ── Stats bar ──────────────────────────────────────────
+            s1, s2, s3, s4, s5 = st.columns(5)
+            reddit_n = len(social_df[social_df["source"] == "reddit"]) if not social_df.empty else 0
+            x_n      = len(social_df[social_df["source"] == "x"])      if not social_df.empty else 0
+            sig_n    = len(signals_df[signals_df["status"] == "queued"]) if not signals_df.empty else 0
+            total_cost = round(cost_row[0] or 0, 4) if cost_row else 0
+            last_run   = str(cost_row[2])[:16] if cost_row and cost_row[2] else "—"
+
+            s1.metric("Reddit Pulls", reddit_n)
+            s2.metric("X Pulls", x_n, help="Requires TWITTER_BEARER_TOKEN")
+            s3.metric("Signals Queued", sig_n)
+            s4.metric("Pipeline Cost", f"${total_cost}")
+            s5.metric("Last Run", last_run)
+
+            st.divider()
+
+            # ── Row 1: Social + Signal Queue ───────────────────────
+            col_r, col_x, col_sig = st.columns([2, 2, 2])
+
+            with col_r:
+                st.markdown("##### 🔴 Reddit Signals")
+                if not social_df.empty:
+                    rdf = social_df[social_df["source"] == "reddit"]
+                    if not rdf.empty:
+                        for _, row in rdf.head(8).iterrows():
+                            relevance_bar = "█" * int(row["relevance"] * 10)
+                            tickers_str = ", ".join(json.loads(row["tickers"] or "[]"))
+                            with st.expander(f"{row['content'][:80]}…" if len(str(row['content'])) > 80 else str(row['content'])):
+                                st.caption(f"r/{row['subreddit']} · u/{row['author']}")
+                                if tickers_str:
+                                    st.caption(f"Tickers: `{tickers_str}`")
+                                st.caption(f"Relevance: {relevance_bar} {row['relevance']:.0%}")
+                                if row["url"]:
+                                    st.markdown(f"[Open in Reddit]({row['url']})")
+                    else:
+                        st.caption("No Reddit pulls yet. Run social ingest.")
+                        st.code("cd C:\\deepstack && python -c \"from agent.tools.social import run_social_ingest; print(run_social_ingest())\"")
+                else:
+                    st.caption("No social data yet.")
+
+            with col_x:
+                st.markdown("##### 🐦 X Timeline")
+                if not social_df.empty:
+                    xdf = social_df[social_df["source"] == "x"]
+                    if not xdf.empty:
+                        for _, row in xdf.head(8).iterrows():
+                            tickers_str = ", ".join(json.loads(row["tickers"] or "[]"))
+                            with st.expander(f"{row['content'][:80]}…" if len(str(row['content'])) > 80 else str(row['content'])):
+                                st.caption(f"@{row['author']}")
+                                if tickers_str:
+                                    st.caption(f"Tickers: `{tickers_str}`")
+                                if row["url"]:
+                                    st.markdown(f"[Open on X]({row['url']})")
+                    else:
+                        st.caption("X reader not yet configured.")
+                        st.markdown("Add `TWITTER_BEARER_TOKEN` to `.env` to enable.")
+                else:
+                    st.caption("No X data yet.")
+
+            with col_sig:
+                st.markdown("##### 🎯 Signal Queue")
+                if not signals_df.empty:
+                    queued = signals_df[signals_df["status"] == "queued"]
+                    if not queued.empty:
+                        for _, row in queued.head(8).iterrows():
+                            score = float(row["final_score"]) if row["final_score"] else 0
+                            badge = "🟢" if score >= 0.8 else "🟡" if score >= 0.6 else "🔴"
+                            with st.expander(f"{badge} [{score:.2f}] {str(row['hypothesis'])[:70]}"):
+                                st.caption(f"Type: {row['signal_type']}")
+                                tickers_str = str(row.get("tickers", "")).replace("[", "").replace("]", "").replace('"', "")
+                                if tickers_str:
+                                    st.caption(f"Tickers: `{tickers_str}`")
+                    else:
+                        st.caption("No signals queued.")
+                else:
+                    st.caption("Signal queue empty.")
+
+            st.divider()
+
+            # ── Row 2: Ingest Status + Agent Log ──────────────────
+            col_ing, col_log = st.columns([1, 1])
+
+            with col_ing:
+                st.markdown("##### 📡 Ingest Status")
+                if not ingest_df.empty:
+                    ingest_df["last_ingested"] = pd.to_datetime(
+                        ingest_df["last_ingested"], errors="coerce"
+                    ).dt.strftime("%m-%d %H:%M")
+                    st.dataframe(
+                        ingest_df.rename(columns={
+                            "source_key": "Source",
+                            "last_ingested": "Last Pull",
+                            "item_count": "Items",
+                        }),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=300,
+                    )
+                else:
+                    st.caption("No ingest records yet.")
+
+            with col_log:
+                st.markdown("##### 🤖 Agent Activity")
+                if not log_df.empty:
+                    log_df["ts"] = pd.to_datetime(log_df["ts"], errors="coerce").dt.strftime("%m-%d %H:%M")
+                    st.dataframe(
+                        log_df[["ts", "action", "entity", "model_tier"]].rename(columns={
+                            "ts": "Time", "action": "Action",
+                            "entity": "Entity", "model_tier": "Model",
+                        }),
+                        use_container_width=True,
+                        hide_index=True,
+                        height=300,
+                    )
+                else:
+                    st.caption("No agent activity yet.")
+
+            # ── Refresh button ─────────────────────────────────────
+            st.divider()
+            rc1, rc2 = st.columns([1, 5])
+            if rc1.button("🔄 Refresh Feed", use_container_width=True):
+                st.cache_data.clear()
+                st.rerun()
+            rc2.caption("Feed updates every 5 min. Reddit ingest runs automatically with the pipeline.")
 
 # ════════════════════════════════════════════════════════════════
 # RIGHT — AI CHAT PANEL (narrow, always visible)
