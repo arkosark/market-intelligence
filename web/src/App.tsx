@@ -5,6 +5,7 @@ import MarketPulse from './components/MarketPulse'
 import Screener from './components/Screener'
 import DeepDive from './components/DeepDive'
 import Earnings from './components/Earnings'
+import Pipeline from './components/Pipeline'
 import IntelligenceFeed from './components/IntelligenceFeed'
 import ArticleIdeas from './components/ArticleIdeas'
 import ChatPanel from './components/ChatPanel'
@@ -12,7 +13,7 @@ import './index.css'
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 300000 } } })
 
-const TABS = ['🌡️ Market Pulse', '🔍 Screener', '📊 Deep Dive', '📅 Earnings', '🔭 Intel Feed', '💡 Article Ideas'] as const
+const TABS = ['🌡️ Market Pulse', '🔍 Screener', '📊 Deep Dive', '📅 Earnings', '⚡ Pipeline', '🔭 Intel Feed', '💡 Article Ideas'] as const
 type Tab = typeof TABS[number]
 
 export default function App() {
@@ -57,6 +58,7 @@ export default function App() {
               {tab === '🔍 Screener'      && <Screener/>}
               {tab === '📊 Deep Dive'     && <DeepDive onTickerChange={setDdTicker}/>}
               {tab === '📅 Earnings'      && <Earnings/>}
+              {tab === '⚡ Pipeline'      && <Pipeline/>}
               {tab === '🔭 Intel Feed'    && <IntelligenceFeed/>}
               {tab === '💡 Article Ideas' && <ArticleIdeas/>}
             </div>

@@ -437,9 +437,148 @@ async def chat(body: dict):
     return EventSourceResponse(event_gen())
 
 
-# ── Intelligence Feed ────────────────────────────────────────────────────────
+# ── shared ───────────────────────────────────────────────────────────────────
 
 DEEPSTACK_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "deepstack")
+
+
+# ── Pipeline ─────────────────────────────────────────────────────────────────
+
+def _pipeline_data() -> dict:
+    import duckdb as _ddb
+    db = os.path.join(DEEPSTACK_PATH, "data", "knowledge_graph.duckdb")
+    if not os.path.exists(db):
+        return {}
+    con = _ddb.connect(db, read_only=True)
+
+    def q(sql, default=[]):
+        try:
+            cols = [d[0] for d in con.description] if con.description else []
+            rows = con.execute(sql).fetchall()
+            cols = [d[0] for d in con.description]
+            return [dict(zip(cols, row)) for row in rows]
+        except Exception:
+            return default
+
+    # signals with tickers from entities_json
+    signals_raw = q("""
+        SELECT id, created_at, signal_type, hypothesis, expected_outcome,
+               novelty, magnitude, confirmation, consensus_divergence,
+               final_score, status, entities_json, evidence_json
+        FROM signals
+        ORDER BY final_score DESC, created_at DESC
+        LIMIT 80
+    """)
+    # extract tickers list from entities_json
+    for s in signals_raw:
+        try:
+            ej = json.loads(s.get("entities_json") or "[]")
+            s["tickers_json"] = json.dumps([e.get("ticker","") for e in ej if e.get("ticker")])
+        except Exception:
+            s["tickers_json"] = "[]"
+        try:
+            ev = json.loads(s.get("evidence_json") or "{}")
+            s["evidence"] = ev.get("summary","") or str(ev)[:200]
+        except Exception:
+            s["evidence"] = ""
+
+    earnings = q("""
+        SELECT id, event_date, ticker, company, event_type, event_name, confirmed, priority
+        FROM events_calendar
+        WHERE event_date >= current_date
+        ORDER BY event_date ASC
+        LIMIT 40
+    """)
+
+    costs = q("""
+        SELECT cycle_ts, model, cost_usd, api_calls, input_tokens, output_tokens, trigger_reason
+        FROM cycle_cost_log
+        ORDER BY cycle_ts DESC
+        LIMIT 30
+    """)
+
+    ingest = q("""
+        SELECT source_key, last_ingested, item_count
+        FROM ingest_status
+        ORDER BY last_ingested DESC
+    """)
+
+    ideas = q("SELECT status, COUNT(*) as cnt FROM article_ideas GROUP BY status")
+    ideas_by_status = {r["status"]: r["cnt"] for r in ideas}
+
+    agent_last = q("SELECT ts, action, entity FROM agent_log ORDER BY ts DESC LIMIT 1")
+
+    # ── build stage tracker ──────────────────────────────────────────────────
+    now = datetime.utcnow()
+
+    def _freshness(rows, minutes=60):
+        if not rows:
+            return "stale"
+        try:
+            ts = max(r.get("last_ingested") or r.get("ts") or r.get("cycle_ts") for r in rows if r)
+            if ts and (now - ts.replace(tzinfo=None)).total_seconds() < minutes * 60:
+                return "ok"
+        except Exception:
+            pass
+        return "warn"
+
+    queued_count = sum(1 for s in signals_raw if s["status"] == "queued")
+
+    stages = [
+        {
+            "name": "Ingest",
+            "icon": "📡",
+            "status": _freshness(ingest, 120),
+            "detail": f"{sum(r['item_count'] for r in ingest)} items · {len(ingest)} sources",
+            "active": bool(ingest),
+        },
+        {
+            "name": "Score",
+            "icon": "⚡",
+            "status": "ok" if signals_raw else "warn",
+            "detail": f"{len(signals_raw)} signals · {queued_count} queued",
+            "active": bool(signals_raw),
+        },
+        {
+            "name": "Fact-check",
+            "icon": "🔎",
+            "status": _freshness(agent_last, 720),
+            "detail": agent_last[0]["action"] if agent_last else "no runs yet",
+            "active": bool(agent_last),
+        },
+        {
+            "name": "Draft",
+            "icon": "✍️",
+            "status": "ok" if ideas_by_status.get("writing", 0) else "idle",
+            "detail": f"{ideas_by_status.get('writing', 0)} writing · {ideas_by_status.get('new', 0)} queued",
+            "active": bool(ideas_by_status.get("writing")),
+        },
+        {
+            "name": "Publish",
+            "icon": "🚀",
+            "status": "ok" if ideas_by_status.get("published", 0) else "idle",
+            "detail": f"{ideas_by_status.get('published', 0)} published",
+            "active": bool(ideas_by_status.get("published")),
+        },
+    ]
+
+    con.close()
+    return {
+        "stages":   stages,
+        "signals":  signals_raw,
+        "earnings": earnings,
+        "costs":    costs,
+        "ingest":   ingest,
+    }
+
+@app.get("/api/pipeline")
+async def pipeline():
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _cached(_cache, "pipeline", _pipeline_data)
+    )
+
+
+# ── Intelligence Feed ────────────────────────────────────────────────────────
 
 def _deepstack_feed() -> dict:
     import sys
