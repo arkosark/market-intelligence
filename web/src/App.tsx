@@ -5,12 +5,14 @@ import MarketPulse from './components/MarketPulse'
 import Screener from './components/Screener'
 import DeepDive from './components/DeepDive'
 import Earnings from './components/Earnings'
+import IntelligenceFeed from './components/IntelligenceFeed'
+import ArticleIdeas from './components/ArticleIdeas'
 import ChatPanel from './components/ChatPanel'
 import './index.css'
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 300000 } } })
 
-const TABS = ['🌡️ Market Pulse', '🔍 Screener', '📊 Deep Dive', '📅 Earnings'] as const
+const TABS = ['🌡️ Market Pulse', '🔍 Screener', '📊 Deep Dive', '📅 Earnings', '🔭 Intel Feed', '💡 Article Ideas'] as const
 type Tab = typeof TABS[number]
 
 export default function App() {
@@ -41,20 +43,22 @@ export default function App() {
           {/* Left column */}
           <div className="flex flex-col flex-1 min-w-0">
             {/* Tabs */}
-            <div className="flex border-b border-[#1e2130] bg-[#0a0a0f] px-4 flex-shrink-0">
+            <div className="flex border-b border-[#1e2130] bg-[#0a0a0f] px-4 flex-shrink-0 overflow-x-auto">
               {TABS.map(t => (
                 <button key={t} onClick={() => setTab(t)}
-                  className={`px-6 py-3 text-sm font-semibold transition-colors tracking-wide ${tab === t ? 'tab-active' : 'tab-inactive'}`}>
+                  className={`px-4 py-3 text-sm font-semibold transition-colors tracking-wide whitespace-nowrap ${tab === t ? 'tab-active' : 'tab-inactive'}`}>
                   {t}
                 </button>
               ))}
             </div>
             {/* Content */}
             <div className="flex-1 overflow-auto">
-              {tab === '🌡️ Market Pulse' && <MarketPulse/>}
-              {tab === '🔍 Screener'     && <Screener/>}
-              {tab === '📊 Deep Dive'    && <DeepDive onTickerChange={setDdTicker}/>}
-              {tab === '📅 Earnings'     && <Earnings/>}
+              {tab === '🌡️ Market Pulse'  && <MarketPulse/>}
+              {tab === '🔍 Screener'      && <Screener/>}
+              {tab === '📊 Deep Dive'     && <DeepDive onTickerChange={setDdTicker}/>}
+              {tab === '📅 Earnings'      && <Earnings/>}
+              {tab === '🔭 Intel Feed'    && <IntelligenceFeed/>}
+              {tab === '💡 Article Ideas' && <ArticleIdeas/>}
             </div>
           </div>
 

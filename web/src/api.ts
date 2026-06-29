@@ -10,6 +10,10 @@ export const api = {
   stock:       (ticker: string, period = '6mo') => ax.get(`/api/stock/${ticker}`, { params: { period } }).then(r => r.data),
   institutional: (ticker: string) => ax.get(`/api/institutional/${ticker}`).then(r => r.data),
   earnings:    () => ax.get('/api/earnings').then(r => r.data),
+  feed:        () => ax.get('/api/feed').then(r => r.data),
+  ideas:       () => ax.get('/api/ideas').then(r => r.data),
+  saveIdea:    (body: object) => ax.post('/api/ideas/save', body).then(r => r.data),
+  updateIdea:  (id: string, status: string) => ax.post(`/api/ideas/${id}/status`, { status }).then(r => r.data),
 }
 
 export async function* streamChat(messages: any[], snapshot: string) {

@@ -31,7 +31,7 @@ export default function Screener() {
           <label className="text-xs text-[#64748b]">Sector</label>
           <select value={sector} onChange={e => setSector(e.target.value)}
             className="bg-[#0a0a0f] border border-[#1e2130] rounded px-2 py-1 text-sm text-[#e2e8f0]">
-            {sectors.map(s => <option key={s}>{s}</option>)}
+            {(sectors as string[]).map(s => <option key={s}>{s}</option>)}
           </select>
         </div>
         <div className="flex flex-col gap-1">

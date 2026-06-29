@@ -435,3 +435,91 @@ async def chat(body: dict):
         yield {"event":"done","data":"{}"}
 
     return EventSourceResponse(event_gen())
+
+
+# ── Intelligence Feed ────────────────────────────────────────────────────────
+
+DEEPSTACK_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "deepstack")
+
+def _deepstack_feed() -> dict:
+    import sys
+    sys.path.insert(0, DEEPSTACK_PATH)
+    import duckdb
+    db = os.path.join(DEEPSTACK_PATH, "data", "knowledge_graph.duckdb")
+    if not os.path.exists(db):
+        return {"social": [], "signals": [], "agent_log": [], "ingest": [], "cost": None}
+    con = duckdb.connect(db, read_only=True)
+
+    def q(sql, default=[]):
+        try:
+            return [dict(zip([d[0] for d in con.description], row))
+                    for row in con.execute(sql).fetchall()]
+        except Exception:
+            return default
+
+    social   = q("SELECT id,source,author,subreddit,content,tickers,relevance,pulled_at,url,status FROM social_pulls WHERE status!='dismissed' ORDER BY relevance DESC,pulled_at DESC LIMIT 60")
+    signals  = q("SELECT id,signal_type,hypothesis,final_score,tickers,created_at FROM signals WHERE status='queued' ORDER BY final_score DESC LIMIT 20")
+    log      = q("SELECT ts,action,entity,detail,model_tier FROM agent_log ORDER BY ts DESC LIMIT 40")
+    ingest   = q("SELECT source_key,last_ingested,item_count FROM ingest_status ORDER BY last_ingested DESC LIMIT 20")
+    cost_row = con.execute("SELECT SUM(cost_usd),SUM(api_calls),MAX(cycle_ts) FROM cycle_cost_log").fetchone()
+    con.close()
+
+    return {
+        "social":    social,
+        "signals":   signals,
+        "agent_log": log,
+        "ingest":    ingest,
+        "cost": {"total_usd": round(cost_row[0] or 0, 4), "api_calls": cost_row[1], "last_run": str(cost_row[2])[:16]} if cost_row else None,
+    }
+
+@app.get("/api/feed")
+async def intelligence_feed():
+    return await asyncio.get_event_loop().run_in_executor(None, lambda: _cached(_cache, "feed", _deepstack_feed))
+
+
+# ── Article Ideas ────────────────────────────────────────────────────────────
+
+def _ideas_data() -> dict:
+    import sys
+    sys.path.insert(0, DEEPSTACK_PATH)
+    from agent.knowledge_graph import init_schema
+    init_schema()
+    from agent.tools.ideas import fetch_substack_feeds, store_news_cache, get_news_cache, get_article_ideas
+    items = fetch_substack_feeds(max_per_feed=6)
+    store_news_cache(items)
+    substack = get_news_cache(limit=120, since_days=14)
+    ideas    = get_article_ideas(limit=50)
+    return {"substack": substack, "ideas": ideas}
+
+@app.get("/api/ideas")
+async def article_ideas():
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _cached(_cache_long, "ideas", _ideas_data)
+    )
+
+@app.post("/api/ideas/save")
+async def save_idea(body: dict):
+    import sys
+    sys.path.insert(0, DEEPSTACK_PATH)
+    from agent.tools.ideas import save_article_idea
+    idea_id = save_article_idea(
+        origin_id=body.get("origin_id",""),
+        origin_type=body.get("origin_type",""),
+        title=body.get("title",""),
+        summary=body.get("summary",""),
+        url=body.get("url",""),
+        tickers=body.get("tickers",[]),
+        relevance=body.get("relevance",0.5),
+        notes=body.get("notes",""),
+    )
+    _cache_long.pop("ideas", None)
+    return {"id": idea_id}
+
+@app.post("/api/ideas/{idea_id}/status")
+async def update_idea(idea_id: str, body: dict):
+    import sys
+    sys.path.insert(0, DEEPSTACK_PATH)
+    from agent.tools.ideas import update_idea_status
+    update_idea_status(idea_id, body.get("status","new"))
+    _cache_long.pop("ideas", None)
+    return {"ok": True}
