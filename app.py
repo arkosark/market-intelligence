@@ -592,7 +592,7 @@ main_col, chat_col = st.columns(_ratio)
 # LEFT — MAIN CONTENT (4 tabs)
 # ════════════════════════════════════════════════════════════════
 with main_col:
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🌡️ Market Pulse", "🔍 Screener", "📊 Deep Dive", "📅 Earnings", "🔭 Intelligence Feed"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🌡️ Market Pulse", "🔍 Screener", "📊 Deep Dive", "📅 Earnings", "🔭 Intelligence Feed", "💡 Article Ideas"])
 
     # ── TAB 1: MARKET PULSE ──────────────────────────────────────
     with tab1:
@@ -1243,6 +1243,204 @@ with main_col:
                 st.cache_data.clear()
                 st.rerun()
             rc2.caption("Feed updates every 5 min. Reddit ingest runs automatically with the pipeline.")
+
+    # ── TAB 6: ARTICLE IDEAS ──────────────────────────────────────
+    with tab6:
+        import sys as _sys
+        _sys.path.insert(0, r"C:\deepstack")
+
+        @st.cache_data(ttl=3600)
+        def _load_substack():
+            try:
+                from agent.tools.ideas import fetch_substack_feeds, store_news_cache, get_news_cache
+                from agent.knowledge_graph import init_schema
+                init_schema()
+                items = fetch_substack_feeds(max_per_feed=6)
+                store_news_cache(items)
+                return get_news_cache(limit=120, since_days=14)
+            except Exception as e:
+                return []
+
+        @st.cache_data(ttl=300)
+        def _load_ideas_data():
+            try:
+                import duckdb as _ddb
+                from pathlib import Path as _Path
+                db = r"C:\deepstack\data\knowledge_graph.duckdb"
+                if not _Path(db).exists():
+                    return {}, [], []
+                con = _ddb.connect(db, read_only=True)
+
+                # X + Reddit pulls
+                try:
+                    social = con.execute("""
+                        SELECT id, source, author, subreddit, content, tickers,
+                               relevance, pulled_at, url
+                        FROM social_pulls
+                        WHERE status != 'dismissed'
+                        ORDER BY relevance DESC, pulled_at DESC
+                        LIMIT 60
+                    """).fetchall()
+                except Exception:
+                    social = []
+
+                # Signal queue
+                try:
+                    signals = con.execute("""
+                        SELECT id, signal_type, hypothesis, final_score, tickers, created_at
+                        FROM signals WHERE status = 'queued'
+                        ORDER BY final_score DESC LIMIT 20
+                    """).fetchall()
+                except Exception:
+                    signals = []
+
+                # Article ideas already saved
+                try:
+                    ideas = con.execute("""
+                        SELECT id, origin_type, title, summary, url, tickers,
+                               relevance, status, created_at
+                        FROM article_ideas WHERE status != 'dismissed'
+                        ORDER BY relevance DESC, created_at DESC LIMIT 30
+                    """).fetchall()
+                except Exception:
+                    ideas = []
+
+                con.close()
+                return social, signals, ideas
+            except Exception as e:
+                return [], [], []
+
+        substack_items = _load_substack()
+        social_raw, signals_raw, ideas_raw = _load_ideas_data()
+
+        # ── Header stats ───────────────────────────────────────
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Substack Articles", len(substack_items))
+        c2.metric("X Posts", sum(1 for r in social_raw if r[1] == "x"))
+        c3.metric("Reddit Posts", sum(1 for r in social_raw if r[1] == "reddit"))
+        c4.metric("EDGAR Signals", len(signals_raw))
+        c5.metric("Saved Ideas", len(ideas_raw))
+
+        st.divider()
+
+        # ── Source filter ──────────────────────────────────────
+        src_filter = st.radio(
+            "Source",
+            ["All", "📰 Substack", "🐦 X Posts", "🔴 Reddit", "📊 EDGAR Signals", "💾 Saved Ideas"],
+            horizontal=True,
+        )
+
+        st.divider()
+
+        # ── SUBSTACK ───────────────────────────────────────────
+        if src_filter in ("All", "📰 Substack"):
+            st.markdown("### 📰 Substack Insights")
+            if substack_items:
+                # Group by source
+                by_source = {}
+                for it in substack_items:
+                    by_source.setdefault(it["source_name"], []).append(it)
+
+                for source_name, items in sorted(by_source.items(),
+                    key=lambda x: max(i["relevance"] for i in x[1]), reverse=True):
+                    top_relevance = max(i["relevance"] for i in items)
+                    if top_relevance == 0 and src_filter == "All":
+                        continue
+                    with st.expander(f"**{source_name}** — {len(items)} articles · top relevance {top_relevance:.0%}"):
+                        for it in items:
+                            rel_bar = "█" * int(it["relevance"] * 8) + "░" * (8 - int(it["relevance"] * 8))
+                            tickers_str = ", ".join(it["tickers"]) if it["tickers"] else "—"
+                            st.markdown(f"**{it['title']}**")
+                            st.caption(f"{it['published']} · Tickers: `{tickers_str}` · {rel_bar} {it['relevance']:.0%}")
+                            if it["summary"]:
+                                st.markdown(f"> {it['summary'][:250]}{'…' if len(it['summary']) > 250 else ''}")
+                            col_a, col_b = st.columns([1, 4])
+                            if it["url"]:
+                                col_a.markdown(f"[Open ↗]({it['url']})")
+                            st.markdown("---")
+            else:
+                st.caption("No Substack articles cached yet — click Refresh below.")
+            st.divider()
+
+        # ── X POSTS ───────────────────────────────────────────
+        if src_filter in ("All", "🐦 X Posts"):
+            st.markdown("### 🐦 X Posts")
+            x_posts = [r for r in social_raw if r[1] == "x"]
+            if x_posts:
+                for r in x_posts[:15]:
+                    _, source, author, _, content, tickers_j, relevance, pulled_at, url = r
+                    tickers = json.loads(tickers_j or "[]")
+                    rel_bar = "█" * int(relevance * 8)
+                    with st.expander(f"@{author} — {str(pulled_at)[:10]} · {rel_bar} {relevance:.0%}"):
+                        st.markdown(content[:300])
+                        if tickers:
+                            st.caption(f"Tickers: `{', '.join(tickers)}`")
+                        if url:
+                            st.markdown(f"[Open on X]({url})")
+            else:
+                st.caption("No X posts yet — add X credits to enable reading.")
+            st.divider()
+
+        # ── REDDIT ─────────────────────────────────────────────
+        if src_filter in ("All", "🔴 Reddit"):
+            st.markdown("### 🔴 Reddit")
+            reddit_posts = [r for r in social_raw if r[1] == "reddit"]
+            if reddit_posts:
+                for r in reddit_posts[:15]:
+                    _, source, author, subreddit, content, tickers_j, relevance, pulled_at, url = r
+                    tickers = json.loads(tickers_j or "[]")
+                    rel_bar = "█" * int(relevance * 8)
+                    with st.expander(f"r/{subreddit} · u/{author} · {rel_bar} {relevance:.0%}"):
+                        st.markdown(content[:300])
+                        if tickers:
+                            st.caption(f"Tickers: `{', '.join(tickers)}`")
+                        if url:
+                            st.markdown(f"[Open on Reddit]({url})")
+            else:
+                st.caption("No Reddit posts yet — add REDDIT_CLIENT_ID to .env to enable.")
+            st.divider()
+
+        # ── EDGAR SIGNALS ──────────────────────────────────────
+        if src_filter in ("All", "📊 EDGAR Signals"):
+            st.markdown("### 📊 EDGAR Signals")
+            if signals_raw:
+                for r in signals_raw:
+                    sid, stype, hypothesis, score, tickers_j, created_at = r
+                    score  = float(score or 0)
+                    badge  = "🟢" if score >= 0.8 else "🟡" if score >= 0.6 else "🔴"
+                    tickers = str(tickers_j or "").replace('"', '').strip("[]")
+                    with st.expander(f"{badge} [{score:.2f}] {hypothesis[:80]}"):
+                        st.caption(f"Type: {stype} · Tickers: `{tickers}` · {str(created_at)[:10]}")
+            else:
+                st.caption("No signals queued. Run the pipeline to generate signals.")
+            st.divider()
+
+        # ── SAVED IDEAS ────────────────────────────────────────
+        if src_filter in ("All", "💾 Saved Ideas"):
+            st.markdown("### 💾 Saved Article Ideas")
+            if ideas_raw:
+                for r in ideas_raw:
+                    iid, otype, title, summary, url, tickers_j, relevance, status, created_at = r
+                    status_badge = {"new": "🆕", "writing": "✍️", "published": "✅", "dismissed": "❌"}.get(status, "")
+                    with st.expander(f"{status_badge} {title or summary[:80]}"):
+                        if summary:
+                            st.markdown(f"> {summary[:200]}")
+                        tickers = json.loads(tickers_j or "[]")
+                        if tickers:
+                            st.caption(f"Tickers: `{', '.join(tickers)}`")
+                        st.caption(f"Source: {otype} · Saved: {str(created_at)[:10]}")
+                        if url:
+                            st.markdown(f"[Source ↗]({url})")
+            else:
+                st.caption("No saved ideas yet.")
+
+        # ── Refresh ────────────────────────────────────────────
+        st.divider()
+        r1, r2 = st.columns([1, 5])
+        if r1.button("🔄 Refresh All", key="refresh_ideas", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+        r2.caption("Substack feeds refresh every hour. X/Reddit refresh every 5 min.")
 
 # ════════════════════════════════════════════════════════════════
 # RIGHT — AI CHAT PANEL (narrow, always visible)
